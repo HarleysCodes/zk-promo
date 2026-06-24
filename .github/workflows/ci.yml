@@ -1,0 +1,73 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Compact compiler
+        run: |
+          curl --proto '=https' --tlsv1.2 -LsSf \
+            https://github.com/midnightntwrk/compact/releases/latest/download/compact-installer.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Pin Compact CLI
+        run: compact update 0.31.0
+
+      - name: Compile contract
+        run: |
+          cd contract
+          compact compile src/zk_promo.compact managed
+          cd ..
+          cp -r contract/managed cli/managed
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: cli/package-lock.json
+
+      - name: Install CLI deps
+        working-directory: cli
+        run: npm ci
+
+      - name: Build
+        working-directory: cli
+        run: npm run build
+
+      - name: Run contract tests
+        working-directory: cli
+        run: node dist/test-cli.js
+
+      - name: Verify operator hash matches on-chain hash
+        working-directory: cli
+        run: |
+          node -e "
+          const { hashPromoCode } = require('./dist/hash.js');
+          const { persistentHash, Bytes32Descriptor, CompactTypeVector } = require('@midnight-ntwrk/compact-runtime');
+          const tag = new Uint8Array(32);
+          tag.set(Buffer.from('zk-promo:v1:'), 0);
+          const code = new Uint8Array(32);
+          code.set(Buffer.from('WINTER24'), 0);
+          const onChain = persistentHash(new CompactTypeVector(2, Bytes32Descriptor), [tag, code]);
+          const op = hashPromoCode('WINTER24');
+          if (Buffer.from(op).toString('hex') !== Buffer.from(onChain).toString('hex')) {
+            console.error('FAIL: operator hash != on-chain hash');
+            console.error('  operator:', Buffer.from(op).toString('hex'));
+            console.error('  on-chain:', Buffer.from(onChain).toString('hex'));
+            process.exit(1);
+          }
+          console.log('OK: operator and on-chain hashes match');
+          console.log('  ' + Buffer.from(op).toString('hex'));
+          "
