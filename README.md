@@ -1,5 +1,7 @@
 # ZK Promo Code Redeemer
 
+[![ci](https://github.com/HarleysCodes/zk-promo/actions/workflows/ci.yml/badge.svg)](https://github.com/HarleysCodes/zk-promo/actions/workflows/ci.yml)
+
 A privacy-preserving promo code redemption dApp on the Midnight Network.
 
 **The plaintext promo code never touches the chain.** A company issues
