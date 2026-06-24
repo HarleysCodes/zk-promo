@@ -1,0 +1,111 @@
+// SPDX-License-Identifier: MIT
+// ZK Promo Code Redeemer
+//
+// A company issues secret promo codes (e.g. "WINTER24"). Users claim them
+// on-chain by submitting a *hash* of the code. The plaintext code is never
+// put on-chain, never broadcast in the clear, never visible in the mempool.
+//
+// Privacy model:
+//   - Public ledger: a Set<Bytes<32>> of valid code-hashes, and a
+//     Map<Bytes<32>, Boolean> of which hashes have been claimed.
+//   - Witness: the user's plaintext code, supplied at claim time and
+//     hashed inside the circuit (off-chain in the prover, only the
+//     hash result touches the ledger).
+//   - The plaintext never crosses the wire: the prover computes
+//     persistentHash(pad(32, code)) and the circuit only sees the hash.
+//
+// First-pass compile checklist (midnight-compact skill, 2026-06):
+//   - no `let` (reserved since 0.28.0)
+//   - no early return inside loops
+//   - ADTs (Set, Map, Counter) cannot be circuit parameters
+//   - any value flowing from a witness/parameter into a ledger op must
+//     pass through disclose()
+//   - circuit return type is `[]`, not `Void`
+
+pragma language_version >= 0.16;
+
+import CompactStandardLibrary;
+
+// ---------------------------------------------------------------------------
+// Ledger
+// ---------------------------------------------------------------------------
+
+// Hashed codes the operator has issued and considers valid.
+export ledger validCodes: Set<Bytes<32>>;
+
+// One bit per code-hash: 0 = unclaimed, 1 = claimed.
+export ledger claimed: Map<Bytes<32>, Boolean>;
+
+// ---------------------------------------------------------------------------
+// Witnesses
+// ---------------------------------------------------------------------------
+
+// The user's plaintext promo code. The plaintext stays in the prover
+// (the user's wallet/CLI). Only the hash derived from it ever touches
+// the network. The salt parameter is an empty Bytes<0> today; the
+// signature is fixed so the contract can grow to salted codes without
+// a redeploy.
+witness user_promo_code(salt: Bytes<0>): Bytes<32>;
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+// Derive the public hash for a plaintext code in the same way the
+// operator does off-chain (see ../cli/src/issue.ts).
+pure circuit hashCode(code: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([
+    pad(32, "zk-promo:v1:"),
+    code
+  ]);
+}
+
+// ---------------------------------------------------------------------------
+// Operator circuit: issue a code
+// ---------------------------------------------------------------------------
+
+// Issue a new promo code. The operator submits the *hash* (computed
+// off-chain with the same hashCode recipe); the plaintext never enters
+// the contract.
+export circuit issue(codeHash: Bytes<32>): [] {
+  // codeHash is a circuit parameter that flows to a ledger op,
+  // so it must pass through disclose().
+  const h = disclose(codeHash);
+  assert(!validCodes.member(h), "code already issued");
+  validCodes.insert(h);
+  claimed.insert(h, false);
+}
+
+// ---------------------------------------------------------------------------
+// User circuit: claim a code
+// ---------------------------------------------------------------------------
+
+// Claim a code by submitting the plaintext via the witness. The
+// plaintext is hashed inside the prover, the hash is checked against
+// the public set, and (if it matches and is unclaimed) the public
+// claim flag is flipped. The plaintext never leaves the user's machine.
+export circuit claim(salt: Bytes<0>): [] {
+  const plaintext = user_promo_code(salt);
+  const h = hashCode(plaintext);
+  // h is a derived value (not a witness/parameter) flowing to ledger,
+  // but the language still requires explicit disclosure on any
+  // value touching a ledger op. This documents the leak boundary
+  // clearly: only h, never plaintext.
+  const dh = disclose(h);
+
+  assert(validCodes.member(dh), "unknown or invalid promo code");
+  const wasClaimed = claimed.lookup(dh);
+  assert(wasClaimed == false, "promo code already claimed");
+
+  claimed.insert(dh, true);
+}
+
+// ---------------------------------------------------------------------------
+// View circuit
+// ---------------------------------------------------------------------------
+
+// Returns true iff a given hash has been claimed. Public.
+export circuit isClaimed(codeHash: Bytes<32>): Boolean {
+  const h = disclose(codeHash);
+  return claimed.lookup(h);
+}

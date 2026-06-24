@@ -1,0 +1,32 @@
+{
+  "name": "zk-promo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ZK promo code redemptions on Midnight. Plaintext codes never touch the chain.",
+  "type": "module",
+  "main": "dist/zk-promo.js",
+  "exports": {
+    ".": "./dist/zk-promo.js",
+    "./contract": "./dist/contract.js",
+    "./hash": "./dist/hash.js",
+    "./test": "./dist/test.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node dist/test-cli.js",
+    "issue": "npm run build && node dist/issue.js",
+    "claim": "npm run build && node dist/claim.js",
+    "status": "npm run build && node dist/status.js",
+    "test:smoke": "npm test"
+  },
+  "dependencies": {
+    "@midnight-ntwrk/compact-runtime": "0.16.0",
+    "@midnight-ntwrk/compact-js": "2.5.1",
+    "@midnight-ntwrk/midnight-js": "4.1.1",
+    "@midnight-ntwrk/midnight-js-types": "4.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.0"
+  }
+}

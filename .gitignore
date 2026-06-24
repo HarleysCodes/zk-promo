@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.store/
+.env
+managed/
+contract/managed/
+cli/managed/
+.DS_Store
+*.log
