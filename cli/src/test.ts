@@ -20,6 +20,7 @@
 
 import { Contract, type Witnesses, type Ledger } from '../managed/contract/index.js';
 import { hashPromoCode } from './hash.js';
+import { persistentHash, Bytes32Descriptor, CompactTypeVector } from '@midnight-ntwrk/compact-runtime';
 
 // The user supplies their plaintext only inside the witness. The
 // rest of the contract sees only the hash. We capture every witness
@@ -134,7 +135,25 @@ export async function runTests() {
   assertEq(wList.length, 1, 'one witness registered');
   assertEq(wList[0], 'user_promo_code', 'witness name matches contract-info');
 
-  return { passed: 11 };
+  // Test 12: operator hash recipe matches the on-chain recipe.
+  // If this fails, claim() will never succeed in production —
+  // the operator's pre-image won't match the on-chain hash.
+  const tag = new Uint8Array(32);
+  tag.set(new TextEncoder().encode('zk-promo:v1:'), 0);
+  const codePadded = new Uint8Array(32);
+  codePadded.set(new TextEncoder().encode('WINTER24'), 0);
+  const onChainHash = persistentHash(
+    new CompactTypeVector(2, Bytes32Descriptor),
+    [tag, codePadded]
+  );
+  const operatorHash = await hashPromoCode('WINTER24');
+  assertEq(
+    Buffer.from(operatorHash).toString('hex'),
+    Buffer.from(onChainHash).toString('hex'),
+    'operator hashPromoCode matches on-chain persistentHash'
+  );
+
+  return { passed: 12 };
 }
 
 function assertEq<T>(a: T, b: T, msg: string) {

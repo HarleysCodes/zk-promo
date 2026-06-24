@@ -93,7 +93,7 @@ npm test
 Expected output:
 
 ```
-✓ 11 contract tests passed
+✓ 12 contract tests passed
   (covers hash determinism, contract shape, witness boundary)
 ```
 
@@ -110,6 +110,11 @@ The test suite verifies:
 9. Plaintext is captured at the witness boundary
 10. Contract's `initialState` is exposed
 11. Witness name matches `contract-info.json`
+12. **Operator's `hashPromoCode()` produces the SAME 32-byte output as
+    the on-chain `persistentHash<Vector<2, Bytes<32>>>(...)`** —
+    this is the contract's "claim will succeed" gate. If this test
+    ever fails, the operator and the contract have drifted and `claim()`
+    will always fail in production.
 
 ## Production deployment
 
