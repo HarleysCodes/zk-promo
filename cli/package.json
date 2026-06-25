@@ -18,6 +18,8 @@
     "deploy": "npm run build && node dist/deploy.js",
     "issue": "npm run build && node dist/issue.js",
     "claim": "npm run build && node dist/claim.js",
+    "issue-redeem": "npm run build && node dist/issue-redeem.js",
+    "claim-redeem": "npm run build && node dist/claim-redeem.js",
     "status": "npm run build && node dist/status.js",
     "test:smoke": "npm test"
   },

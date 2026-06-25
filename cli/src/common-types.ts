@@ -19,14 +19,17 @@ export type ZkPromoCircuits = any;  // SDK generics don't permit user contracts 
 export const ZkPromoPrivateStateId = 'zkPromoPrivateState';
 
 // Private state holds the witness return values between calls. The ZK Promo
-// witness `user_promo_code(salt)` returns the plaintext code, which we keep
-// locally between "load the code into the witness" and "submit the proof".
+// witnesses (`user_promo_code(salt)` and `user_redeem_secret()`) each return
+// their value inline, which we keep locally between "load the value into
+// the witness" and "submit the proof".
 export interface ZkPromoPrivateState {
   currentPromoCode: Uint8Array | null;
+  currentRedeemSecret: Uint8Array | null;
 }
 
 export const emptyPrivateState = (): ZkPromoPrivateState => ({
   currentPromoCode: null,
+  currentRedeemSecret: null,
 });
 
 export type ZkPromoProviders = MidnightProviders<

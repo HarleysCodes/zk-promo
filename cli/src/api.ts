@@ -324,6 +324,7 @@ export async function claim(contract: DeployedZkPromo, providers: ZkPromoProvide
   padded.set(new TextEncoder().encode(plaintextCode), 0);
   await providers.privateStateProvider.set('zkPromoPrivateState', {
     currentPromoCode: padded,
+    currentRedeemSecret: null,
   });
 
   console.log(`  Claiming with plaintext code (only the hash will touch the chain)...`);
@@ -332,17 +333,41 @@ export async function claim(contract: DeployedZkPromo, providers: ZkPromoProvide
   return finalized.public;
 }
 
+/** Operator: register a high-entropy redemption hash on-chain. */
+export async function issueRedemption(contract: DeployedZkPromo, redeemHash: Uint8Array): Promise<FinalizedTxData> {
+  if (redeemHash.length !== 32) throw new Error('redeemHash must be 32 bytes');
+  console.log(`  Issuing redemption hash: 0x${Buffer.from(redeemHash).toString('hex')}`);
+  const finalized = await contract.callTx.issueRedemption(redeemHash);
+  console.log(`  ✓ Issued in tx ${finalized.public.txId} (block ${finalized.public.blockHeight})`);
+  return finalized.public;
+}
+
+/** User: claim a high-entropy redemption token by submitting the 32-byte secret. */
+export async function claimRedemption(contract: DeployedZkPromo, providers: ZkPromoProviders, secret: Uint8Array): Promise<FinalizedTxData> {
+  if (secret.length !== 32) throw new Error('redemption secret must be exactly 32 bytes');
+  // Load the secret into private state so the witness `user_redeem_secret()`
+  // returns it during the prover call.
+  await providers.privateStateProvider.set('zkPromoPrivateState', {
+    currentPromoCode: null,
+    currentRedeemSecret: secret,
+  });
+
+  console.log(`  Claiming redemption (only the hash will touch the chain)...`);
+  const finalized = await contract.callTx.claimRedemption();
+  console.log(`  ✓ Redemption claimed in tx ${finalized.public.txId} (block ${finalized.public.blockHeight})`);
+  return finalized.public;
+}
+
 /** Read on-chain state: valid hashes and their claimed status. */
 export async function status(
   providers: ZkPromoProviders,
   contractAddress: ContractAddress,
-): Promise<{ validCodes: string[]; claimed: Record<string, boolean> }> {
+): Promise<{ validCodes: string[]; claimed: Record<string, boolean>; validRedemptions: string[]; redeemed: Record<string, boolean> }> {
   const state = await providers.publicDataProvider
     .queryContractState(contractAddress)
     .then((cs: any) => (cs ? cs.data : null));
-  if (!state) {
-    return { validCodes: [], claimed: {} };
-  }
+  const empty = { validCodes: [] as string[], claimed: {} as Record<string, boolean>, validRedemptions: [] as string[], redeemed: {} as Record<string, boolean> };
+  if (!state) return empty;
   const ledgerState: any = ledgerFn(state);
   const validCodes: string[] = [];
   const claimed: Record<string, boolean> = {};
@@ -353,6 +378,15 @@ export async function status(
       claimed[hex] = ledgerState.claimed?.lookup?.(member) ?? false;
     }
   }
-  return { validCodes, claimed };
+  const validRedemptions: string[] = [];
+  const redeemed: Record<string, boolean> = {};
+  if (ledgerState.validRedemptions && typeof ledgerState.validRedemptions === 'object') {
+    for (const member of ledgerState.validRedemptions) {
+      const hex = '0x' + Buffer.from(member).toString('hex');
+      validRedemptions.push(hex);
+      redeemed[hex] = ledgerState.redeemed?.lookup?.(member) ?? false;
+    }
+  }
+  return { validCodes, claimed, validRedemptions, redeemed };
 }
 

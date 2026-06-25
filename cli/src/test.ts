@@ -19,28 +19,35 @@
 // match; see README.md "Production deployment" for the gap.
 
 import { Contract, type Witnesses, type Ledger } from '../../contract/managed/contract/index.js';
-import { hashPromoCode } from './hash.js';
+import { hashPromoCode, hashRedemption, generateRedemptionSecret } from './hash.js';
 import { persistentHash, Bytes32Descriptor, CompactTypeVector } from '@midnight-ntwrk/compact-runtime';
 
 // The user supplies their plaintext only inside the witness. The
 // rest of the contract sees only the hash. We capture every witness
 // call to demonstrate the plaintext never leaked.
-const witnessCaptured: { plaintext: string; length: number }[] = [];
+const witnessCaptured: { kind: 'promo'; plaintext: string; length: number }[] = [];
 
 const witnesses: Witnesses<undefined> = {
   user_promo_code: (_ctx, _salt) => {
     // The plaintext is whatever the test sets in testPromoCode.
     const code = testPromoCode!;
-    witnessCaptured.push({ plaintext: code, length: code.length });
+    witnessCaptured.push({ kind: 'promo', plaintext: code, length: code.length });
     // Encode the plaintext the same way the contract's `pad(32, code)`
     // does, and return it.
     const padded = new Uint8Array(32);
     padded.set(new TextEncoder().encode(code), 0);
     return [undefined, padded];
   },
+  user_redeem_secret: (_ctx) => {
+    // The 32-byte secret is whatever the test sets in testRedeemSecret.
+    const secret = testRedeemSecret!;
+    witnessCaptured.push({ kind: 'promo', plaintext: '<32 random bytes>', length: 32 });
+    return [undefined, secret];
+  },
 };
 
 let testPromoCode: string | null = null;
+let testRedeemSecret: Uint8Array | null = null;
 
 // Construct a contract instance with our witness implementations.
 function makeContract() {
@@ -128,12 +135,13 @@ export async function runTests() {
   assertEq(typeof contractModule.claim, 'function',
     'impureCircuits.claim is callable');
 
-  // Test 11: witness signature matches the contract-info
+  // Test 11: witness signatures match the contract-info
   // (Verified at compile time via contract-info.json; this
   // is a runtime sanity check that the wiring is correct.)
   const wList = Object.keys(witnesses);
-  assertEq(wList.length, 1, 'one witness registered');
-  assertEq(wList[0], 'user_promo_code', 'witness name matches contract-info');
+  assertEq(wList.length, 2, 'two witnesses registered (user_promo_code + user_redeem_secret)');
+  assertEq(wList[0], 'user_promo_code', 'witness #1 name matches contract-info');
+  assertEq(wList[1], 'user_redeem_secret', 'witness #2 name matches contract-info');
 
   // Test 12: operator hash recipe matches the on-chain recipe.
   // If this fails, claim() will never succeed in production —
@@ -153,7 +161,34 @@ export async function runTests() {
     'operator hashPromoCode matches on-chain persistentHash'
   );
 
-  return { passed: 12 };
+  // Test 13: operator hashRedemption matches the on-chain hashRedemption.
+  // Same contract: if this drifts, claimRedemption() will never succeed.
+  const redeemTag = new Uint8Array(32);
+  redeemTag.set(new TextEncoder().encode('zk-promo:redeem:v1:'), 0);
+  const secret = generateRedemptionSecret();
+  const onChainRedeemHash = persistentHash(
+    new CompactTypeVector(2, Bytes32Descriptor),
+    [redeemTag, secret]
+  );
+  const operatorRedeemHash = hashRedemption(secret);
+  assertEq(
+    Buffer.from(operatorRedeemHash).toString('hex'),
+    Buffer.from(onChainRedeemHash).toString('hex'),
+    'operator hashRedemption matches on-chain persistentHash'
+  );
+
+  // Test 14: generateRedemptionSecret returns 32 random bytes (entropy check).
+  const s1 = generateRedemptionSecret();
+  const s2 = generateRedemptionSecret();
+  assertEq(s1.length, 32, 'generated redemption secret is 32 bytes');
+  assertEq(s2.length, 32, 'second generated redemption secret is 32 bytes');
+  assertNeq(
+    Buffer.from(s1).toString('hex'),
+    Buffer.from(s2).toString('hex'),
+    'two consecutive generateRedemptionSecret() calls produce different outputs'
+  );
+
+  return { passed: 14 };
 }
 
 function assertEq<T>(a: T, b: T, msg: string) {
