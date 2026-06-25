@@ -130,6 +130,7 @@ compact update 0.31.0
 
 # 2. Compile + install
 cd contract && ~/.local/bin/compact compile src/zk_promo.compact managed && npm install && cd ..
+cp -r contract/managed cli/managed   # mirror CI: cli/ tests import the compiled module
 cd cli && npm install && cd ..
 
 # 3. Build + run tests
