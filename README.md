@@ -15,10 +15,10 @@ see hashes only.
 
 | Privacy primitive | Where it shows up |
 |---|---|
-- **Witness (private input)** | `user_promo_code(salt)` in `contract/src/zk_promo.compact` (memorable-code path) and `user_redeem_secret()` (high-entropy redemption path) |
-| **Public commitment set** | `validCodes: Set<Bytes<32>>` ledger |
-| **Per-item claimed state** | `claimed: Map<Bytes<32>, Boolean>` ledger |
-| **Domain-separated hash** | `persistentHash<Vector<2, Bytes<32>>>([tag, code])` in `hashCode()` |
+| **Witness (private input)** | `user_promo_code(salt)` in `contract/src/zk_promo.compact` (memorable-code path) and `user_redeem_secret()` (high-entropy redemption path) |
+| **Public commitment set** | `validCodes: Set<Bytes<32>>` ledger (promo) and `validRedemptions: Set<Bytes<32>>` ledger (redemption) |
+| **Per-item claimed state** | `claimed: Map<Bytes<32>, Boolean>` (promo) and `redeemed: Map<Bytes<32>, Boolean>` (redemption) |
+| **Domain-separated hash** | `persistentHash<Vector<2, Bytes<32>>>([tag, code])` in `hashCode()` for promos, `hashRedemption()` for redemptions. Two distinct domain tags (`zk-promo:v1:` and `zk-promo:redeem:v1:`) so the same secret value cannot be valid in both sets. |
 | **Explicit disclosure boundary** | `disclose(h)` before any ledger read/write |
 
 This is not a counter or a bboard. There is no public mutable "current
@@ -59,7 +59,18 @@ npx tsx src/deploy.ts                              # writes contract-address.txt
 # 5. Issue a code, claim it, check status
 npx tsx src/issue.ts WINTER24                       # operator registers a hash
 npx tsx src/claim.ts WINTER24                       # user redeems with plaintext
-npx tsx src/status.ts                               # shows on-chain state
+npx tsx src/status.ts                               # shows on-chain state (codes + redemptions)
+
+# 6. (Optional) Issue and claim a high-entropy redemption token.
+# The redemption path uses a 32-byte random secret instead of a
+# memorable word — the pre-image space is 2^256, so brute-force
+# pre-image search against the public hashes is infeasible. This
+# is the production-grade alternative to the promo path. See the
+# "Threat model" section below for the trade-off.
+npx tsx src/issue-redeem.ts                         # operator generates secret + registers hash
+#   → prints the 32-byte secret; deliver it to the recipient out-of-band
+npx tsx src/claim-redeem.ts 0x<secret-hex>          # user redeems with the secret
+npx tsx src/status.ts                               # shows redemption is now consumed
 ```
 
 Every command uses the **real Midnight SDK** (`@midnight-ntwrk/midnight-js`,
@@ -113,7 +124,9 @@ zk-promo/
 | `deploy.ts` | Deploy the ZK Promo contract | One deploy tx |
 | `issue.ts <code>` | Operator: submit the *hash* of `<code>` to the chain | One `issue` tx per code |
 | `claim.ts <code>` | User: submit `<code>` via the witness; prover hashes inside the circuit | One `claim` tx |
-| `status.ts` | Read `validCodes` and `claimed` from the chain via the indexer | None (read-only) |
+| `issue-redeem.ts` | Operator: generate a 32-byte random secret and submit its hash; prints the secret for out-of-band delivery | One `issueRedemption` tx |
+| `claim-redeem.ts <secret-hex>` | User: submit the 32-byte secret via the witness; prover hashes inside the circuit | One `claimRedemption` tx |
+| `status.ts` | Read `validCodes`, `claimed`, `validRedemptions`, `redeemed` from the chain via the indexer | None (read-only) |
 
 All four `*tx` commands sign with the wallet whose seed is in the
 `WALLET_SEED` env var, fund via the wallet's unshielded balance, and
