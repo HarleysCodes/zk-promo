@@ -18,7 +18,7 @@
 // against a Midnight devnet/preprod with a real wallet. The shapes
 // match; see README.md "Production deployment" for the gap.
 
-import { Contract, type Witnesses, type Ledger } from '../managed/contract/index.js';
+import { Contract, type Witnesses, type Ledger } from '../../contract/managed/contract/index.js';
 import { hashPromoCode } from './hash.js';
 import { persistentHash, Bytes32Descriptor, CompactTypeVector } from '@midnight-ntwrk/compact-runtime';
 
