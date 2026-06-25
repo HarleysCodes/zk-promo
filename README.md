@@ -15,10 +15,10 @@ see hashes only.
 
 | Privacy primitive | Where it shows up |
 |---|---|
-| **Witness (private input)** | `user_promo_code(salt)` in `contract/src/zk_promo.compact` |
-| **Public commitment set** | `validCodes: Set<Bytes<32>>` ledger |
-| **Per-item claimed state** | `claimed: Map<Bytes<32>, Boolean>` ledger |
-| **Domain-separated hash** | `persistentHash<Vector<2, Bytes<32>>>([tag, code])` in `hashCode()` |
+| **Witness (private input)** | `user_promo_code(salt)` in `contract/src/zk_promo.compact` (memorable-code path) and `user_redeem_secret()` (high-entropy redemption path) |
+| **Public commitment set** | `validCodes: Set<Bytes<32>>` ledger (promo) and `validRedemptions: Set<Bytes<32>>` ledger (redemption) |
+| **Per-item claimed state** | `claimed: Map<Bytes<32>, Boolean>` (promo) and `redeemed: Map<Bytes<32>, Boolean>` (redemption) |
+| **Domain-separated hash** | `persistentHash<Vector<2, Bytes<32>>>([tag, code])` in `hashCode()` for promos, `hashRedemption()` for redemptions. Two distinct domain tags (`zk-promo:v1:` and `zk-promo:redeem:v1:`) so the same secret value cannot be valid in both sets. |
 | **Explicit disclosure boundary** | `disclose(h)` before any ledger read/write |
 
 This is not a counter or a bboard. There is no public mutable "current
@@ -59,7 +59,18 @@ npx tsx src/deploy.ts                              # writes contract-address.txt
 # 5. Issue a code, claim it, check status
 npx tsx src/issue.ts WINTER24                       # operator registers a hash
 npx tsx src/claim.ts WINTER24                       # user redeems with plaintext
-npx tsx src/status.ts                               # shows on-chain state
+npx tsx src/status.ts                               # shows on-chain state (codes + redemptions)
+
+# 6. (Optional) Issue and claim a high-entropy redemption token.
+# The redemption path uses a 32-byte random secret instead of a
+# memorable word — the pre-image space is 2^256, so brute-force
+# pre-image search against the public hashes is infeasible. This
+# is the production-grade alternative to the promo path. See the
+# "Threat model" section below for the trade-off.
+npx tsx src/issue-redeem.ts                         # operator generates secret + registers hash
+#   → prints the 32-byte secret; deliver it to the recipient out-of-band
+npx tsx src/claim-redeem.ts 0x<secret-hex>          # user redeems with the secret
+npx tsx src/status.ts                               # shows redemption is now consumed
 ```
 
 Every command uses the **real Midnight SDK** (`@midnight-ntwrk/midnight-js`,
@@ -113,7 +124,9 @@ zk-promo/
 | `deploy.ts` | Deploy the ZK Promo contract | One deploy tx |
 | `issue.ts <code>` | Operator: submit the *hash* of `<code>` to the chain | One `issue` tx per code |
 | `claim.ts <code>` | User: submit `<code>` via the witness; prover hashes inside the circuit | One `claim` tx |
-| `status.ts` | Read `validCodes` and `claimed` from the chain via the indexer | None (read-only) |
+| `issue-redeem.ts` | Operator: generate a 32-byte random secret and submit its hash; prints the secret for out-of-band delivery | One `issueRedemption` tx |
+| `claim-redeem.ts <secret-hex>` | User: submit the 32-byte secret via the witness; prover hashes inside the circuit | One `claimRedemption` tx |
+| `status.ts` | Read `validCodes`, `claimed`, `validRedemptions`, `redeemed` from the chain via the indexer | None (read-only) |
 
 All four `*tx` commands sign with the wallet whose seed is in the
 `WALLET_SEED` env var, fund via the wallet's unshielded balance, and
@@ -221,6 +234,59 @@ code is not on-chain.** A reviewer can verify this in three ways:
   `persistentHash` invocation. CLI commands run against Preview; the
   in-process suite and the Preview path both use the same hash
   recipe so they can't drift.
+
+## Single-use semantics
+
+Promo codes (and redemption tokens, see below) are **globally
+single-use**: once any user has successfully claimed a code, no other
+user can claim it. The on-chain state is `claimed: Map<Bytes<32>, Boolean>`
+and the `claim()` circuit asserts `claimed.lookup(h) == false` before
+flipping it to true. First claimer wins, full stop. This is by design
+(typical promo-code UX) but worth flagging explicitly.
+
+## Threat model
+
+The privacy claim — *the plaintext is not on-chain* — is true at the
+network layer (no plaintext in the ledger, no plaintext in the
+mempool-observable transaction bytes). It is **not** a claim about
+the secret's strength against an active adversary.
+
+**The promo path (`issue` / `claim` / `user_promo_code`) is
+vulnerable to wordlist pre-image search.** The hash recipe is
+public (`persistentHash([pad(32, "zk-promo:v1:"), code])`), the
+domain tag is public, and `validCodes` is a public set on-chain.
+An observer can:
+
+1. Take a wordlist of likely memorable codes (`WINTER24`, `SAVE10`,
+   `SUMMER25`, brand names, etc.).
+2. Hash each candidate using the same public recipe.
+3. Compare against `validCodes` to recover the plaintext.
+
+Because memorable codes are low-entropy, this brute-force is cheap.
+In the worst case, a watcher can crack a code as soon as the
+operator issues it and submit `claim()` before the intended user.
+
+**The redemption path (`issueRedemption` / `claimRedemption` /
+`user_redeem_secret`) is not vulnerable to this attack.** The
+redeemable artifact is a full 32-byte random secret, the pre-image
+space is 2²⁵⁶, and brute-force is infeasible. Production
+deployments should use the redemption path. The promo path is
+provided for demo UX where memorable codes matter.
+
+Other notes on the privacy model:
+
+- **Claimer linkability.** A successful `claim()` is publicly
+  visible on-chain (tx id, block height, fee paid by the claimer's
+  unshielded wallet). The plaintext code is private; the act of
+  claiming it is not.
+- **No operator authorization yet.** Today, `issue()` can be called
+  by any wallet. Adding operator-gated issuance is planned as a
+  follow-up and will use an in-circuit operator commitment (not
+  `ownPublicKey()`, which is witness-sourced and not a trusted
+  caller identity).
+- **No off-chain leak protection.** The user must keep the plaintext
+  code out of any logs, screenshots, or shared screens. The contract
+  protects against on-chain exposure only.
 
 ## Origin
 

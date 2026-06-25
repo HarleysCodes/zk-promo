@@ -12,14 +12,18 @@ echo "=== compile ==="
 cd contract
 ~/.local/bin/compact compile src/zk_promo.compact managed
 cd ..
+
+# 2. Install the contract runtime deps + mirror managed/ so the CLI
+# can resolve imports from either path.
+cd contract && npm install --silent && cd ..
 cp -r contract/managed cli/managed
 
-# 2. Install and build the CLI
+# 3. Install and build the CLI
 echo "=== build ==="
 cd cli
 npm install --silent
 npm run build
 
-# 3. Run the test suite
+# 4. Run the test suite
 echo "=== test ==="
 node dist/test-cli.js

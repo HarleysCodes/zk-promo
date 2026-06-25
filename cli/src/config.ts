@@ -8,13 +8,24 @@
 import path from 'node:path';
 import { setNetworkId, getNetworkId } from '@midnight-ntwrk/midnight-js/network-id';
 
-// Domain tag MUST match the one in `contract/src/zk_promo.compact`:
+// Domain tag for the memorable-code path (issue/claim). MUST match
+// the one in `contract/src/zk_promo.compact`:
 //   pure circuit hashCode(code: Bytes<32>): Bytes<32> {
 //     return persistentHash<Vector<2, Bytes<32>>>([pad(32, "zk-promo:v1:"), code]);
 //   }
 // If you change it here, change it there too. The test suite enforces
 // operator-side == on-chain hash byte-for-byte, so a drift fails CI.
 export const HASH_DOMAIN = 'zk-promo:v1:';
+
+// Domain tag for the high-entropy redemption primitive. MUST match
+// the one in `contract/src/zk_promo.compact`:
+//   pure circuit hashRedemption(secret: Bytes<32>): Bytes<32> {
+//     return persistentHash<Vector<2, Bytes<32>>>([pad(32, "zk-promo:redeem:v1:"), secret]);
+//   }
+// Distinct from HASH_DOMAIN above so the same secret value cannot
+// be valid in both the memorable-code and redemption sets (domain
+// separation, per MPS-xxxx Domain Separation for Midnight Hash Constructions).
+export const REDEMPTION_DOMAIN = 'zk-promo:redeem:v1:';
 
 // Managed contract path: compiled artifacts land in <repo>/contract/managed/contract/
 // (output of `compact compile src/zk_promo.compact managed`).

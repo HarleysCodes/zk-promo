@@ -66,14 +66,23 @@ async function main() {
 
   const state = await statusApi(fullProviders, deployed.deployTxData.public.contractAddress);
 
-  if (state.validCodes.length === 0) {
-    console.log('  No codes issued yet.\n');
+  if (state.validCodes.length === 0 && state.validRedemptions.length === 0) {
+    console.log('  No codes or redemptions issued yet.\n');
     return;
   }
-  console.log(`\n  Issued codes (${state.validCodes.length}):\n`);
-  for (const h of state.validCodes) {
-    const claimedFlag = state.claimed[h] ? '✓ claimed' : '· unclaimed';
-    console.log(`    ${h}   ${claimedFlag}`);
+  if (state.validCodes.length > 0) {
+    console.log(`\n  Promo codes (${state.validCodes.length}):\n`);
+    for (const h of state.validCodes) {
+      const claimedFlag = state.claimed[h] ? '✓ claimed' : '· unclaimed';
+      console.log(`    ${h}   ${claimedFlag}`);
+    }
+  }
+  if (state.validRedemptions.length > 0) {
+    console.log(`\n  Redemption tokens (${state.validRedemptions.length}):\n`);
+    for (const h of state.validRedemptions) {
+      const redeemedFlag = state.redeemed[h] ? '✓ redeemed' : '· unredeemed';
+      console.log(`    ${h}   ${redeemedFlag}`);
+    }
   }
   console.log('');
 }
