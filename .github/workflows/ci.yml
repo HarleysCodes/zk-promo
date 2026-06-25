@@ -38,6 +38,13 @@ jobs:
           cache: 'npm'
           cache-dependency-path: cli/package-lock.json
 
+      - name: Install contract runtime deps
+        # The compiled contract module (contract/managed/contract/index.js) imports
+        # @midnight-ntwrk/compact-runtime, which lives in contract/node_modules —
+        # the cli/ install above doesn't cover it.
+        working-directory: contract
+        run: npm ci
+
       - name: Install CLI deps
         working-directory: cli
         run: npm ci
@@ -50,24 +57,6 @@ jobs:
         working-directory: cli
         run: node dist/test-cli.js
 
-      - name: Verify operator hash matches on-chain hash
-        working-directory: cli
-        run: |
-          node -e "
-          const { hashPromoCode } = require('./dist/hash.js');
-          const { persistentHash, Bytes32Descriptor, CompactTypeVector } = require('@midnight-ntwrk/compact-runtime');
-          const tag = new Uint8Array(32);
-          tag.set(Buffer.from('zk-promo:v1:'), 0);
-          const code = new Uint8Array(32);
-          code.set(Buffer.from('WINTER24'), 0);
-          const onChain = persistentHash(new CompactTypeVector(2, Bytes32Descriptor), [tag, code]);
-          const op = hashPromoCode('WINTER24');
-          if (Buffer.from(op).toString('hex') !== Buffer.from(onChain).toString('hex')) {
-            console.error('FAIL: operator hash != on-chain hash');
-            console.error('  operator:', Buffer.from(op).toString('hex'));
-            console.error('  on-chain:', Buffer.from(onChain).toString('hex'));
-            process.exit(1);
-          }
-          console.log('OK: operator and on-chain hashes match');
-          console.log('  ' + Buffer.from(op).toString('hex'));
-          "
+      # Test #12 in cli/src/test.ts asserts that hashPromoCode (operator) produces
+      # the same bytes as persistentHash (on-chain) for the canonical 'WINTER24'
+      # input. That covers the hash-equality invariant — no separate shell check needed.
