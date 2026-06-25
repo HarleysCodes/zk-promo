@@ -4,7 +4,7 @@
 //   - runTests(): an in-process contract test
 
 export { hashPromoCode } from './hash.js';
-export { Contract, type Ledger, type Witnesses } from '../managed/contract/index.js';
+export { Contract, type Ledger, type Witnesses } from '../../contract/managed/contract/index.js';
 export { runTests } from './test.js';
 
 // Re-export the HASH_DOMAIN constant so consumers can verify
