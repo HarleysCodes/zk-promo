@@ -15,7 +15,7 @@ see hashes only.
 
 | Privacy primitive | Where it shows up |
 |---|---|
-| **Witness (private input)** | `user_promo_code(salt)` in `contract/src/zk_promo.compact` |
+- **Witness (private input)** | `user_promo_code(salt)` in `contract/src/zk_promo.compact` (memorable-code path) and `user_redeem_secret()` (high-entropy redemption path) |
 | **Public commitment set** | `validCodes: Set<Bytes<32>>` ledger |
 | **Per-item claimed state** | `claimed: Map<Bytes<32>, Boolean>` ledger |
 | **Domain-separated hash** | `persistentHash<Vector<2, Bytes<32>>>([tag, code])` in `hashCode()` |
@@ -221,6 +221,59 @@ code is not on-chain.** A reviewer can verify this in three ways:
   `persistentHash` invocation. CLI commands run against Preview; the
   in-process suite and the Preview path both use the same hash
   recipe so they can't drift.
+
+## Single-use semantics
+
+Promo codes (and redemption tokens, see below) are **globally
+single-use**: once any user has successfully claimed a code, no other
+user can claim it. The on-chain state is `claimed: Map<Bytes<32>, Boolean>`
+and the `claim()` circuit asserts `claimed.lookup(h) == false` before
+flipping it to true. First claimer wins, full stop. This is by design
+(typical promo-code UX) but worth flagging explicitly.
+
+## Threat model
+
+The privacy claim — *the plaintext is not on-chain* — is true at the
+network layer (no plaintext in the ledger, no plaintext in the
+mempool-observable transaction bytes). It is **not** a claim about
+the secret's strength against an active adversary.
+
+**The promo path (`issue` / `claim` / `user_promo_code`) is
+vulnerable to wordlist pre-image search.** The hash recipe is
+public (`persistentHash([pad(32, "zk-promo:v1:"), code])`), the
+domain tag is public, and `validCodes` is a public set on-chain.
+An observer can:
+
+1. Take a wordlist of likely memorable codes (`WINTER24`, `SAVE10`,
+   `SUMMER25`, brand names, etc.).
+2. Hash each candidate using the same public recipe.
+3. Compare against `validCodes` to recover the plaintext.
+
+Because memorable codes are low-entropy, this brute-force is cheap.
+In the worst case, a watcher can crack a code as soon as the
+operator issues it and submit `claim()` before the intended user.
+
+**The redemption path (`issueRedemption` / `claimRedemption` /
+`user_redeem_secret`) is not vulnerable to this attack.** The
+redeemable artifact is a full 32-byte random secret, the pre-image
+space is 2²⁵⁶, and brute-force is infeasible. Production
+deployments should use the redemption path. The promo path is
+provided for demo UX where memorable codes matter.
+
+Other notes on the privacy model:
+
+- **Claimer linkability.** A successful `claim()` is publicly
+  visible on-chain (tx id, block height, fee paid by the claimer's
+  unshielded wallet). The plaintext code is private; the act of
+  claiming it is not.
+- **No operator authorization yet.** Today, `issue()` can be called
+  by any wallet. Adding operator-gated issuance is planned as a
+  follow-up and will use an in-circuit operator commitment (not
+  `ownPublicKey()`, which is witness-sourced and not a trusted
+  caller identity).
+- **No off-chain leak protection.** The user must keep the plaintext
+  code out of any logs, screenshots, or shared screens. The contract
+  protects against on-chain exposure only.
 
 ## Origin
 

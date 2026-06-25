@@ -36,16 +36,40 @@ export ledger validCodes: Set<Bytes<32>>;
 // One bit per code-hash: 0 = unclaimed, 1 = claimed.
 export ledger claimed: Map<Bytes<32>, Boolean>;
 
+// High-entropy redemption set: operator-issued 32-byte random secrets.
+// Distinct from the memorable-code path — the redeemable artifact is
+// a full 32 random bytes (the pre-image space is 2^256), so brute-force
+// pre-image search against the public hashes is infeasible. Use this
+// path for production deployments.
+export ledger validRedemptions: Set<Bytes<32>>;
+
+// One bit per redemption hash: 0 = unclaimed, 1 = claimed.
+export ledger redeemed: Map<Bytes<32>, Boolean>;
+
 // ---------------------------------------------------------------------------
 // Witnesses
 // ---------------------------------------------------------------------------
 
-// The user's plaintext promo code. The plaintext stays in the prover
-// (the user's wallet/CLI). Only the hash derived from it ever touches
-// the network. The salt parameter is an empty Bytes<0> today; the
-// signature is fixed so the contract can grow to salted codes without
-// a redeploy.
+// The user's plaintext promo code (memorable-code path). The plaintext
+// stays in the prover (the user's wallet/CLI). Only the hash derived
+// from it ever touches the network.
+//
+// The Bytes<0> salt parameter is kept for forward-compatibility with
+// future salted variants; it carries no entropy today. For production
+// deployments that need real secret strength, use the redemption
+// primitive below (user_redeem_secret + issueRedemption/claimRedemption)
+// instead — those take a full 32-byte random secret and don't suffer
+// the wordlist pre-image attack documented in the README.
 witness user_promo_code(salt: Bytes<0>): Bytes<32>;
+
+// The user's plaintext redemption secret (high-entropy path). The
+// plaintext is a full 32-byte random value supplied by the user at
+// claim time. The witness returns the secret to the prover; the prover
+// hashes it inside the circuit; only the hash touches the chain.
+//
+// Unlike user_promo_code, this witness takes no salt parameter — the
+// secret itself carries 256 bits of entropy, which is the entire point.
+witness user_redeem_secret(): Bytes<32>;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -60,13 +84,29 @@ pure circuit hashCode(code: Bytes<32>): Bytes<32> {
   ]);
 }
 
+// Derive the public hash for a high-entropy redemption secret.
+// Uses a distinct domain tag from hashCode() so the same secret value
+// cannot be valid in both the memorable-code and redemption sets
+// (domain separation, per MPS-xxxx Domain Separation for Midnight
+// Hash Constructions).
+pure circuit hashRedemption(secret: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([
+    pad(32, "zk-promo:redeem:v1:"),
+    secret
+  ]);
+}
+
 // ---------------------------------------------------------------------------
-// Operator circuit: issue a code
+// Operator circuits
 // ---------------------------------------------------------------------------
 
-// Issue a new promo code. The operator submits the *hash* (computed
-// off-chain with the same hashCode recipe); the plaintext never enters
-// the contract.
+// Issue a new promo code (memorable-code path). The operator submits
+// the *hash* (computed off-chain with the same hashCode recipe); the
+// plaintext never enters the contract.
+//
+// Note: this path is vulnerable to wordlist pre-image search against
+// the public hashes (see README "Threat model"). For production
+// deployments, use issueRedemption instead.
 export circuit issue(codeHash: Bytes<32>): [] {
   // codeHash is a circuit parameter that flows to a ledger op,
   // so it must pass through disclose().
@@ -76,8 +116,22 @@ export circuit issue(codeHash: Bytes<32>): [] {
   claimed.insert(h, false);
 }
 
+// Issue a new high-entropy redemption token. The operator submits the
+// *hash* of a 32-byte random secret; the plaintext secret is held by
+// the recipient (typically printed on a receipt, sent out-of-band, etc.).
+//
+// This path is the production-grade alternative to `issue`: the
+// pre-image space is 2^256, so brute-force pre-image search against
+// the public hash set is infeasible.
+export circuit issueRedemption(redeemHash: Bytes<32>): [] {
+  const h = disclose(redeemHash);
+  assert(!validRedemptions.member(h), "redemption already issued");
+  validRedemptions.insert(h);
+  redeemed.insert(h, false);
+}
+
 // ---------------------------------------------------------------------------
-// User circuit: claim a code
+// User circuits
 // ---------------------------------------------------------------------------
 
 // Claim a code by submitting the plaintext via the witness. The
@@ -100,12 +154,35 @@ export circuit claim(salt: Bytes<0>): [] {
   claimed.insert(dh, true);
 }
 
+// Claim a redemption token by submitting the 32-byte plaintext secret
+// via the witness. Same privacy pattern as claim(): the plaintext is
+// hashed inside the prover, only the hash touches the chain, the
+// public redemption flag is flipped. The plaintext never leaves the
+// user's machine.
+export circuit claimRedemption(): [] {
+  const secret = user_redeem_secret();
+  const h = hashRedemption(secret);
+  const dh = disclose(h);
+
+  assert(validRedemptions.member(dh), "unknown or invalid redemption");
+  const wasRedeemed = redeemed.lookup(dh);
+  assert(wasRedeemed == false, "redemption already claimed");
+
+  redeemed.insert(dh, true);
+}
+
 // ---------------------------------------------------------------------------
-// View circuit
+// View circuits
 // ---------------------------------------------------------------------------
 
 // Returns true iff a given hash has been claimed. Public.
 export circuit isClaimed(codeHash: Bytes<32>): Boolean {
   const h = disclose(codeHash);
   return claimed.lookup(h);
+}
+
+// Returns true iff a given redemption hash has been claimed. Public.
+export circuit isRedeemed(redeemHash: Bytes<32>): Boolean {
+  const h = disclose(redeemHash);
+  return redeemed.lookup(h);
 }
